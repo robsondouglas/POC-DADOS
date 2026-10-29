@@ -133,8 +133,8 @@ Contrato de resposta:
 - Estrutura de chaves (partition style Hive, compatível com Athena/Glue):
 
 ```
-s3://<bucket>/sexo=M/<yyyy>/<MM>/<dd>/<timestamp>-<uuid>.parquet
-s3://<bucket>/sexo=F/<yyyy>/<MM>/<dd>/<timestamp>-<uuid>.parquet
+s3://<bucket>/sexo=M/<timestamp>-<uuid>.parquet
+s3://<bucket>/sexo=F/<timestamp>-<uuid>.parquet
 ```
 
 - Criptografia: SSE-S3 (ou SSE-KMS se houver requisito de compliance).

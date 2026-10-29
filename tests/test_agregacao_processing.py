@@ -28,10 +28,21 @@ def test_decodificar_records_validos():
 def test_decodificar_ignora_record_invalido():
     bom = _record({"id": "1", "nome": "A", "nascimento": 10, "sexo": "M"})
     ruim = {"kinesis": {"data": "###nao-base64-valido"}, "eventID": "x"}
-    sem_sexo = _record({"id": "3", "nome": "C", "nascimento": 30, "sexo": "X"})
+    # sexo vazio é inválido (campo aberto, mas exige valor não vazio).
+    sem_sexo = _record({"id": "3", "nome": "C", "nascimento": 30, "sexo": ""})
     out = decodificar_records([bom, ruim, sem_sexo])
     assert len(out) == 1
     assert out[0]["id"] == "1"
+
+
+def test_decodificar_aceita_sexo_aberto():
+    regs = [
+        {"id": "1", "nome": "A", "nascimento": 10, "sexo": "I"},
+        {"id": "2", "nome": "B", "nascimento": 20, "sexo": "A"},
+        {"id": "3", "nome": "C", "nascimento": 30, "sexo": 2},
+    ]
+    out = decodificar_records([_record(r) for r in regs])
+    assert [r["sexo"] for r in out] == ["I", "A", "2"]
 
 
 def test_agrupar_por_sexo():
@@ -39,17 +50,21 @@ def test_agrupar_por_sexo():
         {"id": "1", "sexo": "M"},
         {"id": "2", "sexo": "F"},
         {"id": "3", "sexo": "M"},
+        {"id": "4", "sexo": "I"},
     ]
     grupos = agrupar_por_sexo(regs)
-    assert set(grupos.keys()) == {"M", "F"}
+    assert set(grupos.keys()) == {"M", "F", "I"}
     assert len(grupos["M"]) == 2
     assert len(grupos["F"]) == 1
+    assert len(grupos["I"]) == 1
 
 
 def test_montar_chave_s3_particionada():
     now = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     key = montar_chave_s3("M", now=now)
-    assert key.startswith("sexo=M/2026/01/02/")
+    assert key.startswith("sexo=M/")
+    # Não deve conter particionamento por ano/mês/dia.
+    assert key.count("/") == 1
     assert key.endswith(".parquet")
 
 

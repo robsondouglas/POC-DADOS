@@ -43,14 +43,25 @@ def test_nascimento_invalido(valor):
     assert exc.value.field == "nascimento"
 
 
-@pytest.mark.parametrize("valor", [None, "", "X", "m", "f", 1])
+@pytest.mark.parametrize("valor", [None, "", "   ", True])
 def test_sexo_invalido(valor):
     with pytest.raises(ValidationError) as exc:
         validar_registro(registro_valido(sexo=valor))
     assert exc.value.field == "sexo"
 
 
-@pytest.mark.parametrize("sexo", ["M", "F"])
+@pytest.mark.parametrize("sexo", ["M", "F", "I", "A"])
 def test_sexo_valido(sexo):
     out = validar_registro(registro_valido(sexo=sexo))
     assert out["sexo"] == sexo
+
+
+@pytest.mark.parametrize("valor,esperado", [(0, "0"), (1, "1"), (2, "2")])
+def test_sexo_inteiro_normalizado_para_string(valor, esperado):
+    out = validar_registro(registro_valido(sexo=valor))
+    assert out["sexo"] == esperado
+
+
+def test_sexo_string_com_espacos_e_trim():
+    out = validar_registro(registro_valido(sexo="  I  "))
+    assert out["sexo"] == "I"

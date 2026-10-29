@@ -62,7 +62,7 @@ def test_json_invalido_retorna_400(kinesis_stream):
 
 def test_validacao_falha_retorna_400_com_campo(kinesis_stream):
     h, _ = kinesis_stream
-    evt = _event({"id": "a1", "nome": "Ana", "nascimento": 1, "sexo": "X"})
+    evt = _event({"id": "a1", "nome": "Ana", "nascimento": 1, "sexo": ""})
     resp = h.handler(evt)
     assert resp["statusCode"] == 400
     assert json.loads(resp["body"])["field"] == "sexo"

@@ -38,8 +38,11 @@ def _response(status: int, body: dict) -> dict:
 def _parse_params(event: dict) -> tuple[str | None, int, int]:
     params = event.get("queryStringParameters") or {}
     sexo = params.get("sexo")
-    if sexo not in (None, "M", "F"):
-        raise ValueError("sexo deve ser 'M' ou 'F'")
+    # Campo aberto: qualquer valor não vazio é aceito como filtro de partição.
+    if sexo is not None:
+        sexo = sexo.strip()
+        if not sexo:
+            sexo = None
 
     try:
         limit = int(params.get("limit", DEFAULT_LIMIT))
@@ -67,7 +70,7 @@ def _consultar(sexo: str | None, limit: int, offset: int) -> list[dict]:
 
     colunas = ", ".join(CAMPOS_PUBLICOS)
     # hive_partitioning=1 permite filtrar pela coluna de partição `sexo`.
-    glob = f"s3://{DATA_BUCKET}/sexo=*/*/*/*/*.parquet"
+    glob = f"s3://{DATA_BUCKET}/sexo=*/*.parquet"
     sql = (
         f"SELECT {colunas} FROM read_parquet(?, hive_partitioning=1)"
     )
@@ -87,7 +90,7 @@ def _consultar(sexo: str | None, limit: int, offset: int) -> list[dict]:
 def handler(event: dict, context: object | None = None) -> dict:
     """Ponto de entrada da Lambda de consulta.
 
-    Query params: `sexo` (M|F, opcional), `limit`, `offset`.
+    Query params: `sexo` (opcional, qualquer valor), `limit`, `offset`.
     """
     try:
         sexo, limit, offset = _parse_params(event)
