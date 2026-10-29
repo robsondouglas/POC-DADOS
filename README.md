@@ -7,15 +7,32 @@ CloudFront + Lambda de consulta).
 
 ## Arquitetura
 
-```
-Cliente --HTTPS--> API Gateway --> Lambda Ingestão --> Kinesis Data Stream
-                                                             |
-                                        (BatchSize=30 / janela 20s)
-                                                             v
-                                          Lambda Agregação --> S3 (Parquet: sexo=M/ | sexo=F/)
-                                                             ^
-Navegador --> CloudFront --/api/*--> Lambda Consulta --------/  (lê via DuckDB, retorna JSON)
-          \--/ (site estático S3 via OAC)
+```mermaid
+flowchart LR
+    Cliente([Cliente])
+    Navegador([Navegador])
+
+    subgraph Ingestao["Fluxo de ingestão"]
+        APIGW[API Gateway<br/>POST /eventos]
+        LIngestao[Lambda Ingestão<br/>validação de schema]
+        Kinesis[(Kinesis Data Stream)]
+        LAgregacao[Lambda Agregação<br/>BatchSize=30 / janela 20s]
+    end
+
+    subgraph Visualizacao["Fluxo de visualização"]
+        CloudFront[CloudFront]
+        SiteBucket[(S3 site estático<br/>via OAC)]
+        LConsulta[Lambda Consulta<br/>DuckDB → JSON]
+    end
+
+    Dados[(S3 Parquet<br/>sexo=M/ · sexo=F/)]
+
+    Cliente -- HTTPS --> APIGW --> LIngestao --> Kinesis --> LAgregacao --> Dados
+
+    Navegador --> CloudFront
+    CloudFront -- "/" --> SiteBucket
+    CloudFront -- "/api/*" --> LConsulta
+    LConsulta -- lê Parquet --> Dados
 ```
 
 Especificações completas em `.kiro/specs/ingestao-eventos-kinesis/`
