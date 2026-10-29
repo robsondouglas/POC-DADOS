@@ -1,0 +1,282 @@
+service: poc-dados
+
+frameworkVersion: "4"
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: sa-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 256
+  timeout: 30
+  logRetentionInDays: 14
+  environment:
+    STAGE: ${self:provider.stage}
+  httpApi:
+    cors: true
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: "*"
+
+package:
+  individually: true
+  patterns:
+    - "!**"
+    - "src/**"
+
+# serverless-python-requirements é nativo no Serverless v4: basta o bloco
+# custom.pythonRequirements abaixo (não precisa listar em `plugins`).
+custom:
+  dataBucketName: ${self:service}-dados-${aws:accountId}-${self:provider.region}
+  siteBucketName: ${self:service}-site-${aws:accountId}-${self:provider.region}
+  streamName: eventos-pessoas-stream-${self:provider.stage}
+  pythonRequirements:
+    # O devcontainer é Linux x86_64 compatível com o runtime Lambda, então o
+    # pip baixa os wheels corretos para a plataforma nativa sem Docker.
+    dockerizePip: false
+    layer: true
+    # slim: true remove __pycache__/.pyc/dist-info/testes; strip: false preserva
+    # os .so nativos (ex.: duckdb).
+    slim: true
+    strip: false
+    noDeploy:
+      - boto3
+      - botocore
+      - pytest
+      - moto
+      - ruff
+    # Força o uso do requirements.txt da raiz. Sem isto, o plugin detecta o
+    # uv.lock do projeto (que não contém a dep de runtime) e gera um layer
+    # vazio via `uv export`.
+    useUv: false
+    fileName: requirements.txt
+    # Desativa o cache para não reusar artefatos antigos durante a depuração.
+    useStaticCache: false
+    useDownloadCache: false
+    invalidateCaches: true
+
+functions:
+  ingestao:
+    handler: src/ingestao/handler.handler
+    description: Recebe HTTPS, valida schema e publica no Kinesis
+    timeout: 29
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    environment:
+      KINESIS_STREAM_NAME: ${self:custom.streamName}
+    iam:
+      role:
+        statements:
+          - Effect: Allow
+            Action:
+              - kinesis:PutRecord
+            Resource:
+              Fn::GetAtt: [EventosStream, Arn]
+    events:
+      - httpApi:
+          path: /eventos
+          method: post
+
+  agregacao:
+    handler: src/agregacao/handler.handler
+    description: Consome Kinesis em lotes, agrupa por sexo e grava Parquet no S3
+    timeout: 60
+    memorySize: 512
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    environment:
+      OUTPUT_BUCKET: ${self:custom.dataBucketName}
+    iam:
+      role:
+        statements:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource:
+              Fn::Sub: "arn:aws:s3:::${self:custom.dataBucketName}/*"
+          - Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource:
+              Fn::GetAtt: [AggregationDLQ, Arn]
+    events:
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt: [EventosStream, Arn]
+          batchSize: 30
+          batchWindow: 20
+          startingPosition: LATEST
+          bisectBatchOnFunctionError: true
+          maximumRetryAttempts: 3
+          destinations:
+            onFailure:
+              type: sqs
+              arn:
+                Fn::GetAtt: [AggregationDLQ, Arn]
+
+  consulta:
+    handler: src/consulta/handler.handler
+    description: Consulta os Parquet no S3 (DuckDB) e retorna JSON para a pagina
+    timeout: 29
+    memorySize: 512
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    environment:
+      DATA_BUCKET: ${self:custom.dataBucketName}
+    iam:
+      role:
+        statements:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - Fn::Sub: "arn:aws:s3:::${self:custom.dataBucketName}"
+              - Fn::Sub: "arn:aws:s3:::${self:custom.dataBucketName}/*"
+    events:
+      - httpApi:
+          path: /api/registros
+          method: get
+
+resources:
+  Resources:
+    EventosStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:custom.streamName}
+        StreamModeDetails:
+          StreamMode: ON_DEMAND
+        RetentionPeriodHours: 24
+
+    DataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.dataBucketName}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+
+    SiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.siteBucketName}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+
+    AggregationDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-agregacao-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+
+    # CloudFront Origin Access Control para servir o site estatico sem bucket publico
+    SiteOAC:
+      Type: AWS::CloudFront::OriginAccessControl
+      Properties:
+        OriginAccessControlConfig:
+          Name: ${self:service}-site-oac-${self:provider.stage}
+          OriginAccessControlOriginType: s3
+          SigningBehavior: always
+          SigningProtocol: sigv4
+
+    SiteBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      DependsOn: SiteDistribution
+      Properties:
+        Bucket:
+          Ref: SiteBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: AllowCloudFrontRead
+              Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource:
+                Fn::Sub: "arn:aws:s3:::${self:custom.siteBucketName}/*"
+              Condition:
+                StringEquals:
+                  AWS:SourceArn:
+                    Fn::Sub: "arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}"
+
+    SiteDistribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn: HttpApiStage
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          DefaultRootObject: index.html
+          Origins:
+            - Id: SiteS3Origin
+              DomainName:
+                Fn::GetAtt: [SiteBucket, RegionalDomainName]
+              S3OriginConfig:
+                OriginAccessIdentity: ""
+              OriginAccessControlId:
+                Fn::GetAtt: [SiteOAC, Id]
+            - Id: ApiOrigin
+              DomainName:
+                Fn::Join:
+                  - ""
+                  - - Ref: HttpApi
+                    - ".execute-api."
+                    - ${self:provider.region}
+                    - ".amazonaws.com"
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols:
+                  - TLSv1.2
+          DefaultCacheBehavior:
+            TargetOriginId: SiteS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            # CachingOptimized managed policy
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          CacheBehaviors:
+            - PathPattern: /api/*
+              TargetOriginId: ApiOrigin
+              ViewerProtocolPolicy: redirect-to-https
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+              # CachingDisabled managed policy
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+              # AllViewerExceptHostHeader origin request policy
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: true
+
+  Outputs:
+    DataBucketName:
+      Value: ${self:custom.dataBucketName}
+    SiteBucketName:
+      Value: ${self:custom.siteBucketName}
+    KinesisStreamName:
+      Value: ${self:custom.streamName}
+    CloudFrontDomain:
+      Value:
+        Fn::GetAtt: [SiteDistribution, DomainName]
+    HttpApiBaseUrl:
+      Description: Endpoint base do HTTP API (ingestao em POST /eventos)
+      Value:
+        Fn::GetAtt: [HttpApi, ApiEndpoint]

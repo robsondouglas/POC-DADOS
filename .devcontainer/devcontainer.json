@@ -1,0 +1,8 @@
+{
+  "name": "POC-DADOS - Pipeline Kinesis/S3",
+  "image": "robsondouglas/dev-lambda-node:1.0.4",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteEnv": {
+    "AWS_REGION": "sa-east-1"
+  }
+}

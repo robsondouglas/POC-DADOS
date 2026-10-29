@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>POC Dados — Visualização</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; }
+    .controls { display: flex; gap: .5rem; align-items: center; margin: 1rem 0; }
+    select, button { padding: .4rem .6rem; font-size: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: .5rem .75rem; text-align: left; }
+    th { background: #f4f4f4; }
+    .status { margin-top: .5rem; color: #666; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>Registros — POC Dados</h1>
+
+  <div class="controls">
+    <label for="sexo">Sexo:</label>
+    <select id="sexo">
+      <option value="">Todos</option>
+      <option value="M">M</option>
+      <option value="F">F</option>
+    </select>
+    <button id="prev">Anterior</button>
+    <button id="next">Próxima</button>
+    <button id="reload">Atualizar</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>id</th><th>sexo</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="status" id="status"></div>
+
+  <script>
+    const LIMIT = 50;
+    let offset = 0;
+
+    const $ = (id) => document.getElementById(id);
+
+    async function carregar() {
+      const sexo = $("sexo").value;
+      const params = new URLSearchParams({ limit: LIMIT, offset });
+      if (sexo) params.set("sexo", sexo);
+
+      $("status").textContent = "Carregando...";
+      try {
+        // Mesma origem via CloudFront: /api/* roteia para a Lambda de consulta.
+        const resp = await fetch(`/api/registros?${params.toString()}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        renderizar(data.itens || []);
+        $("status").textContent =
+          `Mostrando ${data.count} registro(s) — offset ${data.offset}`;
+      } catch (err) {
+        $("status").textContent = `Erro ao carregar: ${err.message}`;
+      }
+    }
+
+    function renderizar(itens) {
+      const tbody = $("rows");
+      tbody.innerHTML = "";
+      for (const item of itens) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${item.id ?? ""}</td><td>${item.sexo ?? ""}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+
+    $("reload").addEventListener("click", () => { offset = 0; carregar(); });
+    $("sexo").addEventListener("change", () => { offset = 0; carregar(); });
+    $("next").addEventListener("click", () => { offset += LIMIT; carregar(); });
+    $("prev").addEventListener("click", () => {
+      offset = Math.max(0, offset - LIMIT); carregar();
+    });
+
+    carregar();
+  </script>
+</body>
+</html>

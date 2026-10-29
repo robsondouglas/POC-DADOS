@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Serverless / Node
+node_modules/
+.serverless/
+.requirements/
+
+# uv lockfile: NÃO versionar. Se presente, o serverless-python-requirements
+# exporta dele (via `uv export`) e ignora o requirements.txt, gerando um layer
+# sem as dependências de runtime. Mantemos as deps no requirements.txt.
+uv.lock
+
+# AWS / env
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/

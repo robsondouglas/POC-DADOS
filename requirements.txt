@@ -1,0 +1,4 @@
+# Dependências de runtime empacotadas nas Lambdas.
+# DuckDB é usado tanto na agregação (escrita de Parquet particionado) quanto
+# na consulta (leitura via SQL). Dependência única mantém o layer pequeno.
+duckdb==1.1.3

@@ -1,0 +1,9 @@
+{
+  "name": "poc-dados",
+  "version": "1.0.0",
+  "description": "Pipeline serverless de ingestao de eventos: API Gateway -> Lambda -> Kinesis -> Lambda -> S3 (Parquet particionado)",
+  "private": true,
+  "devDependencies": {
+    "serverless": "^4.4.0"
+  }
+}
